@@ -1,6 +1,5 @@
 ﻿import numpy as np
 
-# CW dynamics propagator - 400km orbit, 500kg mass, 5N max thrust
 class ClohessyWiltshireDynamics:
     def __init__(self, alt=400.0, mass=500.0, max_thrust=5.0):
         mu = 3.986004418e14
@@ -10,7 +9,6 @@ class ClohessyWiltshireDynamics:
         self.max_thrust = max_thrust
 
     def apply_thrust_saturation(self, force):
-        # hard clip to 5N per axis!!
         return np.clip(force, -self.max_thrust, self.max_thrust)
 
     def state_derivative(self, state, force=np.zeros(3)):
@@ -18,7 +16,6 @@ class ClohessyWiltshireDynamics:
         clamped = self.apply_thrust_saturation(force)
         acc = clamped / self.mass
         
-        # Hill's eqns
         dvx = 3 * (self.n**2) * x + 2 * self.n * vy + acc[0]
         dvy = -2 * self.n * vx + acc[1]
         dvz = -(self.n**2) * z + acc[2]

@@ -2,12 +2,12 @@
 import scipy.linalg
 
 class LQRBaselineController:
-    def __init__(self, sim):
+    def __init__(self, sim, target=np.zeros(6)):
         self.sim = sim
+        self.target = target
         n = self.sim.n
         
-        # State space matrices for CW equations
-        self.A = np.array([
+        A = np.array([
             [0, 0, 0, 1, 0, 0],
             [0, 0, 0, 0, 1, 0],
             [0, 0, 0, 0, 0, 1],
@@ -16,7 +16,7 @@ class LQRBaselineController:
             [0, 0, -n**2, 0, 0, 0]
         ])
         
-        self.B = np.array([
+        B = np.array([
             [0, 0, 0],
             [0, 0, 0],
             [0, 0, 0],
@@ -28,10 +28,9 @@ class LQRBaselineController:
         Q = np.diag([100.0, 100.0, 100.0, 10.0, 10.0, 10.0])
         R = np.diag([1.0, 1.0, 1.0]) * 1e4
         
-        # solve algebraic riccati eq for K gain
-        P = scipy.linalg.solve_continuous_are(self.A, self.B, Q, R)
-        self.K = np.linalg.inv(R) @ self.B.T @ P
+        P = scipy.linalg.solve_continuous_are(A, B, Q, R)
+        self.K = np.linalg.inv(R) @ B.T @ P
 
-    def compute_control(self, state, target=np.zeros(6)):
-        # F = -Kx
-        return -self.K @ (state - target)
+    def compute_control(self, state, target=None):
+        tgt = target if target is not None else self.target
+        return -self.K @ (state - tgt)

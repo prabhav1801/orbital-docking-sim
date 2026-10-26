@@ -8,7 +8,6 @@ class OnboardCameraSensor:
         self.last_valid = np.zeros(6)
 
     def get_measurement(self, true_state):
-        # simulate vision dropout / occlusion occasionally
         if np.random.rand() < self.dropout_p:
             return self.last_valid, True
         
@@ -17,27 +16,25 @@ class OnboardCameraSensor:
         self.last_valid = measured
         return measured, False
 
-class SimpleKalmanFilter:
+class LinearKalmanFilter:
     def __init__(self):
-        self.state_estimate = np.zeros(6)
+        self.state_est = np.zeros(6)
         self.P = np.eye(6) * 1.0
         self.Q = np.eye(6) * 1e-3
         self.R = np.eye(6) * 0.1
 
-    def predict(self, A, B, state, force, dt):
-        F = np.eye(6) + A * dt
-        self.state_estimate = F @ self.state_estimate
+    def predict(self, dt):
+        F = np.eye(6)
+        self.state_est = F @ self.state_est
         self.P = F @ self.P @ F.T + self.Q
 
     def update(self, measurement, is_dropout):
         if is_dropout:
-            return self.state_estimate # skip update if vision dropped
-        
+            return self.state_est
         H = np.eye(6)
         S = H @ self.P @ H.T + self.R
         K = self.P @ H.T @ np.linalg.inv(S)
-        y = measurement - (H @ self.state_estimate)
-        
-        self.state_estimate += K @ y
+        y = measurement - (H @ self.state_est)
+        self.state_est += K @ y
         self.P = (np.eye(6) - K @ H) @ self.P
-        return self.state_estimate
+        return self.state_est
