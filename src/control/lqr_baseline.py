@@ -1,36 +1,19 @@
-﻿import numpy as np
+"""LQR controller from the continuous-time algebraic Riccati equation."""
+import numpy as np
 import scipy.linalg
 
+
 class LQRBaselineController:
-    def __init__(self, sim, target=np.zeros(6)):
+    def __init__(self, sim, q_diag=(100, 100, 100, 10, 10, 10), r_scale=1e4, gain_scale=1.0):
+        """gain_scale multiplies K; 1.0 is the plain LQR gain."""
         self.sim = sim
-        self.target = target
-        n = self.sim.n
-        
-        A = np.array([
-            [0, 0, 0, 1, 0, 0],
-            [0, 0, 0, 0, 1, 0],
-            [0, 0, 0, 0, 0, 1],
-            [3*n**2, 0, 0, 0, 2*n, 0],
-            [0, 0, 0, -2*n, 0, 0],
-            [0, 0, -n**2, 0, 0, 0]
-        ])
-        
-        B = np.array([
-            [0, 0, 0],
-            [0, 0, 0],
-            [0, 0, 0],
-            [1/self.sim.mass, 0, 0],
-            [0, 1/self.sim.mass, 0],
-            [0, 0, 1/self.sim.mass]
-        ])
-        
-        Q = np.diag([100.0, 100.0, 100.0, 10.0, 10.0, 10.0])
-        R = np.diag([1.0, 1.0, 1.0]) * 1e4
-        
-        P = scipy.linalg.solve_continuous_are(A, B, Q, R)
-        self.K = np.linalg.inv(R) @ B.T @ P
+        self.target = np.zeros(6)
+        self.A, self.B = sim.linear_matrices()
+        Q = np.diag(np.asarray(q_diag, dtype=float))
+        R = np.eye(3) * r_scale
+        P = scipy.linalg.solve_continuous_are(self.A, self.B, Q, R)
+        self.K = gain_scale * (np.linalg.inv(R) @ self.B.T @ P)
 
     def compute_control(self, state, target=None):
-        tgt = target if target is not None else self.target
+        tgt = self.target if target is None else target
         return -self.K @ (state - tgt)

@@ -1,11 +1,11 @@
-﻿import cv2
+import cv2
 import numpy as np
 
 class ArUcoVisionPoseEstimator:
-    """
-    ArUco / AprilTag fiducial marker relative pose estimation module.
-    Extracts 6-DOF translation and rotation vectors via Perspective-n-Point (PnP) solver
-    to feed optical relative state measurements into the Clohessy-Wiltshire state estimator.
+    """Relative pose (translation, rotation vector) of an ArUco marker via solvePnP.
+
+    Camera intrinsics default to assumed values (800 px focal length, 640x480) and the
+    marker side length to 0.5 m; replace them with calibrated values for real data.
     """
     def __init__(self, camera_matrix=None, dist_coeffs=None):
         self.camera_matrix = camera_matrix if camera_matrix is not None else np.array([
@@ -16,7 +16,7 @@ class ArUcoVisionPoseEstimator:
         
         self.dist_coeffs = dist_coeffs if dist_coeffs is not None else np.zeros((4, 1), dtype=np.float32)
         
-        marker_size = 0.5
+        marker_size = 0.5  # m
         self.marker_points_3d = np.array([
             [-marker_size/2,  marker_size/2, 0],
             [ marker_size/2,  marker_size/2, 0],
@@ -43,4 +43,3 @@ class ArUcoVisionPoseEstimator:
                 return True, tvec.flatten(), rvec.flatten()
                 
         return False, None, None
-

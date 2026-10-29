@@ -1,40 +1,44 @@
-﻿import numpy as np
+"""ROS 2-style node wrappers. There is no rclpy dependency: `publish` just prints.
+
+These only illustrate how the pose estimator and controller would be split into nodes.
+"""
+import numpy as np
+
 from src.vision.vision_pose_node import ArUcoVisionPoseEstimator
 
-class MockROS2Node:
-    def __init__(self, node_name):
-        self.node_name = node_name
+
+class MockNode:
+    def __init__(self, name):
+        self.name = name
 
     def publish(self, topic, message):
-        print(f"[{self.node_name}] Publishing to {topic}: {message}")
+        print(f"[{self.name}] {topic}: {message}")
 
-class VisionPoseNode(MockROS2Node):
-    """
-    ROS 2 Node for optical relative navigation, subscribing to raw camera frames,
-    running ArUco PnP pose estimation, and publishing relative states.
-    """
+
+class VisionPoseNode(MockNode):
+    """Runs ArUco + solvePnP on a camera frame and publishes the marker translation."""
+
     def __init__(self):
         super().__init__("vision_pose_node")
         self.estimator = ArUcoVisionPoseEstimator()
 
     def process_camera_frame(self, frame):
-        found, tvec, rvec = self.estimator.estimate_relative_pose(frame)
-        if found:
-            self.publish("/camera/relative_pose", tvec)
-            return tvec
-        return None
+        found, tvec, _ = self.estimator.estimate_relative_pose(frame)
+        if not found:
+            return None
+        self.publish("/camera/relative_pose", tvec)
+        return tvec
 
-class GNCControllerNode(MockROS2Node):
-    """
-    ROS 2 Node for Guidance, Navigation, and Control (GNC), subscribing to estimated states
-    and evaluating saturated LQR / RL control laws.
-    """
-    def __init__(self):
+
+class GNCControllerNode(MockNode):
+    """Applies a controller (anything with compute_control) and clips to the thrust limit."""
+
+    def __init__(self, controller, max_thrust=5.0):
         super().__init__("gnc_controller_node")
+        self.controller = controller
+        self.max_thrust = max_thrust
 
     def evaluate_control(self, estimated_state):
-        force_cmd = -np.eye(3) @ estimated_state[0:3]
-        clamped_force = np.clip(force_cmd, -5.0, 5.0)
-        self.publish("/thruster/cmd_force", clamped_force)
-        return clamped_force
-
+        force = np.clip(self.controller.compute_control(estimated_state), -self.max_thrust, self.max_thrust)
+        self.publish("/thruster/cmd_force", force)
+        return force

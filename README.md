@@ -1,89 +1,58 @@
-# Autonomous Orbital Rendezvous & Docking GNC Testbed 🛰️⚙️
+# Orbital rendezvous and docking testbed
 
-A Python simulation testbed for spacecraft proximity operations and terminal docking, based on linear Clohessy–Wiltshire (Hill's) relative orbital dynamics, a saturated LQR controller and Monte Carlo verification.
+Python simulation of terminal spacecraft docking using linear Clohessy-Wiltshire (Hill) relative dynamics, a saturated LQR controller, and a Monte Carlo benchmark. A noisy-camera / Kalman-filter loop, an ArUco pose estimator and an RL environment are included as prototypes.
 
----
-
-## 📂 Project Structure
+## Layout
 
 ```text
-.
-├── app.py                  # Streamlit dashboard (trajectory plots, mission metrics)
-├── benchmark_eval.py       # 500-trial Monte Carlo benchmark (self-contained)
-├── main.py                 # Day 1: single LQR docking run
-├── main_day2.py            # Day 2: noisy-camera + Kalman filter run (prototype)
-├── train.py                # Entry point for the RL prototype
-└── src/
-    ├── dynamics/cw_propagation.py   # CW equations, RK4, per-axis thrust saturation
-    ├── control/lqr_baseline.py      # LQR gain from the continuous-time ARE (CARE)
-    ├── vision/
-    │   ├── camera_sensor.py         # Noisy camera model (5% dropout), Kalman filter class
-    │   └── vision_pose_node.py      # ArUco (DICT_4X4_50) detection + solvePnP pose
-    ├── ros2/docking_nodes.py        # ROS 2-style node wrappers (mock publish layer, no rclpy)
-    └── ai/ppo_docking.py            # Actor-critic RL environment/training prototype
+app.py                     Streamlit dashboard (single trajectory, delta-v, capture time)
+benchmark_eval.py          500-trial Monte Carlo benchmark
+run_lqr.py                 single docking run, perfect state feedback
+run_noisy_nav.py           docking run with noisy camera + Kalman filter
+train_rl.py                trains the policy-gradient prototype (needs torch)
+src/
+  dynamics/cw_propagation.py   CW equations, RK4 step, per-axis thrust saturation
+  control/lqr_baseline.py      LQR gain from the continuous-time Riccati equation
+  simulation.py                episode runner and capture criterion
+  vision/camera_sensor.py      noisy full-state camera model, CW Kalman filter
+  vision/vision_pose_node.py   ArUco detection + solvePnP pose (assumed intrinsics)
+  ros2/docking_nodes.py        ROS 2-style wrappers; no rclpy, publish() prints
+  rl/policy_gradient.py        docking environment + actor-critic prototype
 ```
 
----
+## Model
 
-## 🛠️ Engineering Overview
+- Relative motion in the LVLH frame (x radial, y along-track, z cross-track), 400 km circular orbit, 500 kg spacecraft.
+- RK4 integration at dt = 1 s, thrust clipped to ±5 N per axis.
+- LQR: Q = diag(100, 100, 100, 10, 10, 10), R = 10⁴·I, gain from the continuous-time ARE, saturation applied in the dynamics.
+- Capture: position error < 0.5 m and speed < 0.05 m/s.
 
-- **Dynamics:** linear CW relative motion in the LVLH frame (x radial, y along-track, z cross-track), 400 km circular orbit, RK4 integration at dt = 1 s, thrust clipped to ±5 N per axis, 500 kg spacecraft.
-- **Control:** LQR gain from the continuous-time Riccati equation (Q = diag(100,100,100,10,10,10), R = 10⁴·I) with thrust saturation applied in the dynamics.
-- **Heuristic baseline:** the LQR gain scaled by 0.88 (untrained, used only for comparison).
-- **Vision (prototype):** ArUco marker detection and `solvePnP` relative pose with assumed camera intrinsics. Not connected to the benchmark.
-- **ROS 2-style wrappers:** classes that mimic node structure and print to stdout. No `rclpy` dependency.
-- **Dashboard:** `app.py` plots relative X and Y against time, with dock status, total Δv and dock time. Initial distance, thrust limit and mass are adjustable.
+## Monte Carlo results
 
----
-
-## 📊 Monte Carlo Verification
-
-500 randomized trials (`benchmark_eval.py`, seed `42`, dt = 1 s, 600 s horizon):
-
-| Parameter | Range |
-| :--- | :--- |
-| Along-track offset y₀ | [−150, −50] m |
-| Radial / cross-track offsets x₀, z₀ | ±5 m |
-| Initial velocities | ±0.05 m/s per axis |
-
-**Capture criterion:** position error < 0.5 m **and** speed < 0.05 m/s. A trial is a success if this is met within 600 s.
+`python benchmark_eval.py`: 500 trials, seed 42, 600 s horizon. Initial conditions: y₀ ∈ [−150, −50] m, x₀, z₀ ∈ ±5 m, each velocity component ∈ ±0.05 m/s. Perfect state feedback, no disturbances or sensor noise.
 
 | Controller | Capture rate | Mean Δv | Mean capture time |
 | :--- | :--- | :--- | :--- |
-| Saturated LQR | 100.0% | 1.32 m/s | ~505 s |
-| LQR gain × 0.88 (heuristic) | 100.0% | 1.31 m/s | ~519 s |
+| Saturated LQR | 100.0% | 1.32 m/s | 505 s |
+| LQR gain × 0.88 | 100.0% | 1.31 m/s | 519 s |
 
-Notes:
-- The two controllers show no meaningful Δv difference (0.01 m/s). The scaled gain converges slightly slower.
-- Mean capture time is close to the 600 s window, so a shorter horizon would reduce the success rate.
-- Mean terminal position error is ≈ 49 cm in both cases. This only reflects the 0.5 m stopping threshold, not control accuracy.
-- Perturbations, sensor noise and estimator error are **not** included in this benchmark.
+- The two gains differ by 0.01 m/s in Δv; the scaled gain converges slightly slower.
+- Mean capture time is close to the 600 s horizon, so a shorter horizon would lower the capture rate. R = 10⁴ makes the controller slow, and the trajectory overshoots the target by a few metres before settling.
+- Mean final position error (≈ 49 cm) just reflects the 0.5 m stopping threshold, not control accuracy.
 
----
+## Prototypes (not part of the benchmark)
 
-## 🧪 Prototype Status
+- **Noisy navigation** (`run_noisy_nav.py`): camera model with 0.15 m / 0.02 m/s Gaussian noise and 5% frame dropout, filtered by a Kalman filter that uses the discretised CW model. One seeded run captures at ~516 s; no statistics over many runs yet.
+- **Vision pose** (`vision_pose_node.py`): ArUco DICT_4X4_50 + solvePnP with assumed camera intrinsics. Checked on a synthetic marker only; not connected to the control loop.
+- **RL** (`src/rl/policy_gradient.py`): actor-critic with a one-step advantage-weighted update. It is not PPO and has not been trained to a validated result or compared with LQR.
+- **ROS 2-style nodes**: structural sketch only.
 
-These modules are experimental and **not part of the benchmark or dashboard**:
-
-- `src/vision/camera_sensor.py`: Gaussian noise and 5% dropout model, plus a Kalman filter with an identity process model (no CW dynamics). Not validated in closed loop.
-- `src/ai/ppo_docking.py`: actor-critic environment with a simple policy-gradient-style update. It is not PPO and has not been run to a validated result.
-- `main_day2.py`: noisy-vision run script. It has not been run end-to-end after refactoring.
-
----
-
-## 🚀 Getting Started
+## Running
 
 ```bash
-pip install numpy scipy pandas plotly streamlit
-pip install opencv-python torch    # only for the vision / RL prototypes
-```
-
-Run the benchmark:
-```bash
+pip install -r requirements.txt
 python benchmark_eval.py
-```
-
-Launch the dashboard:
-```bash
+python run_lqr.py
+python run_noisy_nav.py
 streamlit run app.py
 ```

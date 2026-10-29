@@ -1,0 +1,7 @@
+numpy
+scipy
+pandas
+streamlit
+# optional: vision and RL prototypes
+opencv-contrib-python
+torch

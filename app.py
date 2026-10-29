@@ -1,95 +1,38 @@
-import streamlit as st
-import numpy as np
+"""Streamlit dashboard: run one docking trajectory and plot it."""
 import pandas as pd
-import scipy.linalg
-import plotly.graph_objects as go
+import streamlit as st
 
-st.set_page_config(page_title="Orbital Docking GNC Dashboard", page_icon="🛰️", layout="wide")
+from src.dynamics.cw_propagation import ClohessyWiltshireDynamics
+from src.control.lqr_baseline import LQRBaselineController
+from src.simulation import run_episode
 
-class ClohessyWiltshireDynamics:
-    def __init__(self, alt=400.0, mass=500.0, max_thrust=5.0):
-        mu = 3.986004418e14
-        r = 6371000.0 + (alt * 1000.0)
-        self.n = np.sqrt(mu / (r**3))
-        self.mass = mass
-        self.max_thrust = max_thrust
+st.set_page_config(page_title="Orbital Docking GNC Dashboard", layout="wide")
 
-    def apply_thrust_saturation(self, force):
-        return np.clip(force, -self.max_thrust, self.max_thrust)
+st.sidebar.title("Simulation config")
+controller_name = st.sidebar.selectbox("Controller", ["Saturated LQR", "LQR gain x 0.88"])
+initial_y = st.sidebar.slider("Initial along-track offset (m)", -200.0, -50.0, -100.0, 5.0)
+max_thrust = st.sidebar.slider("Max thrust per axis (N)", 1.0, 20.0, 5.0, 0.5)
+mass = st.sidebar.slider("Spacecraft mass (kg)", 100.0, 1000.0, 500.0, 50.0)
+run = st.sidebar.button("Run", type="primary")
 
-    def state_derivative(self, state, force=np.zeros(3)):
-        x, y, z, vx, vy, vz = state
-        clamped = self.apply_thrust_saturation(force)
-        acc = clamped / self.mass
-        dvx = 3 * (self.n**2) * x + 2 * self.n * vy + acc[0]
-        dvy = -2 * self.n * vx + acc[1]
-        dvz = -(self.n**2) * z + acc[2]
-        return np.array([vx, vy, vz, dvx, dvy, dvz]), clamped
+st.title("Spacecraft rendezvous and docking")
+st.caption("Clohessy-Wiltshire dynamics, 400 km circular orbit, perfect state feedback")
 
-    def propagate_step(self, state, force, dt):
-        f = lambda s: self.state_derivative(s, force)[0]
-        k1 = f(state)
-        k2 = f(state + 0.5 * dt * k1)
-        k3 = f(state + 0.5 * dt * k2)
-        k4 = f(state + dt * k3)
-        next_state = state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-        _, applied = self.state_derivative(state, force)
-        return next_state, applied
-
-class LQRBaselineController:
-    def __init__(self, sim, target=np.zeros(6)):
-        self.sim = sim
-        self.target = target
-        n = self.sim.n
-        A = np.array([[0,0,0,1,0,0],[0,0,0,0,1,0],[0,0,0,0,0,1],[3*n**2,0,0,0,2*n,0],[0,0,0,-2*n,0,0],[0,0,-n**2,0,0,0]])
-        B = np.array([[0,0,0],[0,0,0],[0,0,0],[1/self.sim.mass,0,0],[0,1/self.sim.mass,0],[0,0,1/self.sim.mass]])
-        Q = np.diag([100.0, 100.0, 100.0, 10.0, 10.0, 10.0])
-        R = np.diag([1.0, 1.0, 1.0]) * 1e4
-        P = scipy.linalg.solve_continuous_are(A, B, Q, R)
-        self.K = np.linalg.inv(R) @ B.T @ P
-
-    def compute_control(self, state):
-        return -self.K @ (state - self.target)
-
-st.sidebar.title("GNC Simulation Config")
-controller_type = st.sidebar.selectbox("Controller Architecture", ["Saturated LQR", "Policy-Gradient RL"])
-initial_y = st.sidebar.slider("Initial Y Distance (m)", -200.0, -50.0, -100.0, 5.0)
-max_thrust = st.sidebar.slider("Max Thrust Limit (N)", 1.0, 20.0, 5.0, 0.5)
-mass = st.sidebar.slider("Spacecraft Mass (kg)", 100.0, 1000.0, 500.0, 50.0)
-run_sim = st.sidebar.button("Run Simulation Trajectory", type="primary")
-
-st.title("Spacecraft Rendezvous & Docking Dashboard")
-st.markdown("**RWTH Aachen University — M.Sc. Robotic Systems Engineering | By Prabhav Sharma**")
-st.markdown("---")
-
-if run_sim:
+if run:
     sim = ClohessyWiltshireDynamics(alt=400.0, mass=mass, max_thrust=max_thrust)
-    lqr = LQRBaselineController(sim)
-    state = np.array([0.0, initial_y, 0.0, 0.0, 0.0, 0.0])
-    dt = 1.0
-    horizon = 600
-    trajectory = []
-    dv_total = 0.0
-    success = False
-    
-    for t in range(horizon):
-        force = lqr.compute_control(state) if controller_type == "Saturated LQR" else -lqr.K @ state * 0.9
-        next_state, applied = sim.propagate_step(state, force, dt)
-        dv_total += (np.linalg.norm(applied) / sim.mass) * dt
-        trajectory.append({"Time (s)": t*dt, "X (m)": state[0], "Y (m)": state[1], "Z (m)": state[2]})
-        state = next_state
-        if np.linalg.norm(state[0:3]) < 0.5 and np.linalg.norm(state[3:6]) < 0.05:
-            success = True
-            break
+    gain_scale = 1.0 if controller_name == "Saturated LQR" else 0.88
+    controller = LQRBaselineController(sim, gain_scale=gain_scale)
 
-    df = pd.DataFrame(trajectory)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Docking Status", "SUCCESS" if success else "TIMEOUT")
-    col2.metric("Total Delta-V", f"{dv_total:.2f} m/s")
-    col3.metric("Dock Time", f"{len(df)} seconds")
+    result = run_episode(sim, controller, [0.0, initial_y, 0.0, 0.0, 0.0, 0.0],
+                         horizon=600, dt=1.0, record=True)
+    df = pd.DataFrame(result["trajectory"][:, :4], columns=["Time (s)", "X (m)", "Y (m)", "Z (m)"])
 
-    st.markdown("---")
-    st.subheader("Relative Trajectory & Convergence")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Status", "Captured" if result["success"] else "Timeout")
+    c2.metric("Total delta-v", f"{result['delta_v']:.2f} m/s")
+    c3.metric("Capture time", f"{result['capture_time']:.0f} s" if result["success"] else "-")
+
+    st.subheader("Relative position")
     st.line_chart(df.set_index("Time (s)")[["X (m)", "Y (m)"]])
 else:
-    st.info("👈 Configure your parameters in the sidebar and click **'Run Simulation Trajectory'**.")
+    st.info("Set the parameters in the sidebar and press Run.")
